@@ -1,144 +1,151 @@
-name: Publish Images
-
-on:
-  push:
-    branches:
-      - 'develop'
-      - 'main'
-    tags:
-      - 'v*.*.*'
-    paths:
-      - 'services/**'
-      - 'postman_collections/**'
-      - 'deploy/**'
-      - '.github/workflows/**'
-  workflow_dispatch:
-
 jobs:
-  build-context:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dump GitHub context
-        env:
-          GITHUB_CONTEXT: ${{ toJson(github) }}
-        run: echo "$GITHUB_CONTEXT"
   build:
-    needs: build-context
-    runs-on: ubuntu-latest
     env:
-      PLATFORMS: "linux/amd64,linux/arm64"
+      PLATFORMS: linux/amd64,linux/arm64
+    needs: build-context
+    runs-on: self-hosted
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - continue-on-error: true
+      name: Checkout code
+      uses: actions/checkout@v4
+    - continue-on-error: true
+      name: Env seen prerun
+      run: env
+    - continue-on-error: true
+      id: branch-name
+      name: Get branch name
+      uses: tj-actions/branch-names@v8
+    - continue-on-error: true
+      name: Current branch name
+      run: 'echo "Current Branch: ${{ steps.branch-name.outputs.current_branch }}"
 
-      - name: Env seen prerun
-        run: env
+        echo "Target Branch: ${{ steps.branch-name.outputs.base_ref_branch }}"
 
-      - name: Get branch name
-        id: branch-name
-        uses: tj-actions/branch-names@v8
+        echo "Tag if exist: ${{ steps.branch-name.outputs.tag }}"
 
-      - name: Current branch name
-        run: |
-          echo "Current Branch: ${{ steps.branch-name.outputs.current_branch }}"
-          echo "Target Branch: ${{ steps.branch-name.outputs.base_ref_branch }}"
-          echo "Tag if exist: ${{ steps.branch-name.outputs.tag }}"
+        '
+    - continue-on-error: true
+      if: steps.branch-name.outputs.is_tag == 'true'
+      name: Running on a tag.
+      run: 'echo "TAG_NAME=${{ steps.branch-name.outputs.tag }}" >> ${GITHUB_ENV}
 
-      - name: Running on a tag.
-        if: steps.branch-name.outputs.is_tag == 'true'
-        run: |
-          echo "TAG_NAME=${{ steps.branch-name.outputs.tag }}" >> ${GITHUB_ENV}
-          echo "TAG_LATEST=latest" >> ${GITHUB_ENV}
+        echo "TAG_LATEST=latest" >> ${GITHUB_ENV}
 
-      - name: Running on a branch and merge.
-        if: steps.branch-name.outputs.is_tag != 'true' && github.event_name == 'push' && steps.branch-name.outputs.current_branch != 'main'
-        run: |
-          echo "TAG_NAME=${{ steps.branch-name.outputs.current_branch }}" >> ${GITHUB_ENV}
-          echo "TAG_LATEST=${{ steps.branch-name.outputs.current_branch }}" >> ${GITHUB_ENV}
+        '
+    - continue-on-error: true
+      if: steps.branch-name.outputs.is_tag != 'true' && github.event_name == 'push'
+        && steps.branch-name.outputs.current_branch != 'main'
+      name: Running on a branch and merge.
+      run: 'echo "TAG_NAME=${{ steps.branch-name.outputs.current_branch }}" >> ${GITHUB_ENV}
 
-      - name: Running on main branch.
-        if: steps.branch-name.outputs.is_tag != 'true' && github.event_name == 'push' && steps.branch-name.outputs.current_branch == 'main'
-        run: |
-          echo "TAG_NAME=${{ steps.branch-name.outputs.current_branch }}" >> ${GITHUB_ENV}
-          echo "TAG_LATEST=latest" >> ${GITHUB_ENV}
+        echo "TAG_LATEST=${{ steps.branch-name.outputs.current_branch }}" >> ${GITHUB_ENV}
 
-      - name: Running on a branch and pull req.
-        if: steps.branch-name.outputs.is_tag != 'true' && github.event_name != 'push'
-        run: |
-          echo "TAG_NAME=${{ steps.branch-name.outputs.base_ref_branch }}" >> ${GITHUB_ENV}
-          echo "TAG_LATEST=${{ steps.branch-name.outputs.base_ref_branch }}" >> ${GITHUB_ENV}
+        '
+    - continue-on-error: true
+      if: steps.branch-name.outputs.is_tag != 'true' && github.event_name == 'push'
+        && steps.branch-name.outputs.current_branch == 'main'
+      name: Running on main branch.
+      run: 'echo "TAG_NAME=${{ steps.branch-name.outputs.current_branch }}" >> ${GITHUB_ENV}
 
-      # setup Docker build action
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Set up QEMU
-        id: qemu
-        uses: docker/setup-qemu-action@v3
+        echo "TAG_LATEST=latest" >> ${GITHUB_ENV}
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        '
+    - continue-on-error: true
+      if: steps.branch-name.outputs.is_tag != 'true' && github.event_name != 'push'
+      name: Running on a branch and pull req.
+      run: 'echo "TAG_NAME=${{ steps.branch-name.outputs.base_ref_branch }}" >> ${GITHUB_ENV}
 
-      - name: Build crapi-identity all platforms and push to Docker Hub
-        uses: docker/build-push-action@v3
-        with:
-          context: ./services/identity
-          tags: crapi/crapi-identity:${{ env.TAG_LATEST }},crapi/crapi-identity:${{ env.TAG_NAME }}
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          cache-from: type=gha,scope=identity-service
-          cache-to: type=gha,mode=max,scope=identity-service
+        echo "TAG_LATEST=${{ steps.branch-name.outputs.base_ref_branch }}" >> ${GITHUB_ENV}
 
-      - name: Build crapi-workshop all platforms and push to Docker Hub
-        uses: docker/build-push-action@v3
-        with:
-          context: ./services/workshop
-          tags: crapi/crapi-workshop:${{ env.TAG_LATEST }},crapi/crapi-workshop:${{ env.TAG_NAME }}
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          cache-from: type=gha,scope=workshop-service
-          cache-to: type=gha,mode=max,scope=workshop-service
-
-      - name: Build crapi-community all platforms and push to Docker Hub
-        uses: docker/build-push-action@v3
-        with:
-          context: ./services/community
-          tags: crapi/crapi-community:${{ env.TAG_LATEST }},crapi/crapi-community:${{ env.TAG_NAME }}
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          cache-from: type=gha,scope=community-service
-          cache-to: type=gha,mode=max,scope=community-service
-
-      - name: Build crapi-web all platforms and push to Docker Hub
-        uses: docker/build-push-action@v3
-        with:
-          context: ./services/web
-          tags: crapi/crapi-web:${{ env.TAG_LATEST }},crapi/crapi-web:${{ env.TAG_NAME }}
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          cache-from: type=gha,scope=web-service
-          cache-to: type=gha,mode=max,scope=web-service
-
-      - name: Build gateway-service all platforms and push to Docker Hub
-        uses: docker/build-push-action@v3
-        with:
-          context: ./services/gateway-service
-          tags: crapi/gateway-service:${{ env.TAG_LATEST }},crapi/gateway-service:${{ env.TAG_NAME }}
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          cache-from: type=gha,scope=gateway-service
-          cache-to: type=gha,mode=max,scope=gateway-service
-
-      - name: Build mailhog all platforms and push to Docker Hub
-        uses: docker/build-push-action@v3
-        with:
-          context: ./services/mailhog
-          tags: crapi/mailhog:${{ env.TAG_LATEST }},crapi/mailhog:${{ env.TAG_NAME }}
-          platforms: ${{ env.PLATFORMS }}
-          push: true
-          cache-from: type=gha,scope=mailhog-service
-          cache-to: type=gha,mode=max,scope=mailhog-service
-
+        '
+    - continue-on-error: true
+      id: buildx
+      name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    - continue-on-error: true
+      id: qemu
+      name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    - continue-on-error: true
+      name: Login to DockerHub
+      uses: docker/login-action@v3
+      with:
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+    - continue-on-error: true
+      name: Build crapi-identity all platforms and push to Docker Hub
+      uses: docker/build-push-action@v3
+      with:
+        cache-from: type=gha,scope=identity-service
+        cache-to: type=gha,mode=max,scope=identity-service
+        context: ./services/identity
+        platforms: ${{ env.PLATFORMS }}
+        push: false
+        tags: crapi/crapi-identity:${{ env.TAG_LATEST }},crapi/crapi-identity:${{
+          env.TAG_NAME }}
+    - continue-on-error: true
+      name: Build crapi-workshop all platforms and push to Docker Hub
+      uses: docker/build-push-action@v3
+      with:
+        cache-from: type=gha,scope=workshop-service
+        cache-to: type=gha,mode=max,scope=workshop-service
+        context: ./services/workshop
+        platforms: ${{ env.PLATFORMS }}
+        push: false
+        tags: crapi/crapi-workshop:${{ env.TAG_LATEST }},crapi/crapi-workshop:${{
+          env.TAG_NAME }}
+    - continue-on-error: true
+      name: Build crapi-community all platforms and push to Docker Hub
+      uses: docker/build-push-action@v3
+      with:
+        cache-from: type=gha,scope=community-service
+        cache-to: type=gha,mode=max,scope=community-service
+        context: ./services/community
+        platforms: ${{ env.PLATFORMS }}
+        push: false
+        tags: crapi/crapi-community:${{ env.TAG_LATEST }},crapi/crapi-community:${{
+          env.TAG_NAME }}
+    - continue-on-error: true
+      name: Build crapi-web all platforms and push to Docker Hub
+      uses: docker/build-push-action@v3
+      with:
+        cache-from: type=gha,scope=web-service
+        cache-to: type=gha,mode=max,scope=web-service
+        context: ./services/web
+        platforms: ${{ env.PLATFORMS }}
+        push: false
+        tags: crapi/crapi-web:${{ env.TAG_LATEST }},crapi/crapi-web:${{ env.TAG_NAME
+          }}
+    - continue-on-error: true
+      name: Build gateway-service all platforms and push to Docker Hub
+      uses: docker/build-push-action@v3
+      with:
+        cache-from: type=gha,scope=gateway-service
+        cache-to: type=gha,mode=max,scope=gateway-service
+        context: ./services/gateway-service
+        platforms: ${{ env.PLATFORMS }}
+        push: false
+        tags: crapi/gateway-service:${{ env.TAG_LATEST }},crapi/gateway-service:${{
+          env.TAG_NAME }}
+    - continue-on-error: true
+      name: Build mailhog all platforms and push to Docker Hub
+      uses: docker/build-push-action@v3
+      with:
+        cache-from: type=gha,scope=mailhog-service
+        cache-to: type=gha,mode=max,scope=mailhog-service
+        context: ./services/mailhog
+        platforms: ${{ env.PLATFORMS }}
+        push: false
+        tags: crapi/mailhog:${{ env.TAG_LATEST }},crapi/mailhog:${{ env.TAG_NAME }}
+  build-context:
+    runs-on: self-hosted
+    steps:
+    - continue-on-error: true
+      env:
+        GITHUB_CONTEXT: ${{ toJson(github) }}
+      name: Dump GitHub context
+      run: echo "$GITHUB_CONTEXT"
+name: Publish Images
+on:
+  repository_dispatch:
+    types: trigger-ga___publish.yml
